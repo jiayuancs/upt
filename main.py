@@ -11,6 +11,7 @@ Australian Centre for Robotic Vision
 import os
 import sys
 import torch
+import time
 import random
 import warnings
 import argparse
@@ -25,6 +26,10 @@ from utils import custom_collate, CustomisedDLE, DataFactory
 warnings.filterwarnings("ignore")
 
 def main(rank, args):
+    
+    # 让0号进程先启动
+    if rank != 0:
+        time.sleep(1)
 
     dist.init_process_group(
         backend="nccl",
