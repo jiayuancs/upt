@@ -268,7 +268,7 @@ class CustomisedDLE(DistributedLearningEngine):
             objects = output['objects']
             scores = output['scores']
             verbs = output['labels']
-            interactions = conversion[objects, verbs]
+            # interactions = conversion[objects, verbs]
             # Recover target box scale
             gt_bx_h = net.module.recover_boxes(target['boxes_h'], target['size'])
             gt_bx_o = net.module.recover_boxes(target['boxes_o'], target['size'])
