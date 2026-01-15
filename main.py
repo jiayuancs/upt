@@ -94,7 +94,7 @@ def main(rank, args):
         print(f"=> Rank {rank}: start from a randomly initialised model")
 
     engine = CustomisedDLE(
-        upt, train_loader, test_dataloader, ood_loader,
+        upt, train_loader, test_loader, ood_loader,
         max_norm=args.clip_max_norm,
         num_classes=args.num_classes,
         print_interval=args.print_interval,

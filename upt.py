@@ -20,10 +20,10 @@ from ops import binary_focal_loss_with_logits
 from interaction_head import InteractionHead
 
 import sys
-sys.path.append('detr')
-from models import build_model
-from util import box_ops
-from util.misc import nested_tensor_from_tensor_list
+# sys.path.append('detr')
+from detr.models import build_model
+from detr.util import box_ops
+from detr.util.misc import nested_tensor_from_tensor_list
 
 class UPT(nn.Module):
     """

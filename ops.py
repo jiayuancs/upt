@@ -18,8 +18,8 @@ from typing import Dict, List, Optional, Tuple
 from scipy.optimize import linear_sum_assignment
 
 import sys
-sys.path.append('detr')
-from util.box_ops import generalized_box_iou
+# sys.path.append('detr')
+from detr.util.box_ops import generalized_box_iou
 
 class BalancedBoxSampler:
     def __init__(self, threshold: float = .2, perc: float = .8) -> None:
@@ -487,3 +487,10 @@ def binary_focal_loss_with_logits(
         return loss
     else:
         raise ValueError("Unsupported reduction method {}".format(reduction))
+
+def recover_boxes(boxes, size):
+    boxes = box_cxcywh_to_xyxy(boxes)
+    h, w = size
+    scale_fct = torch.stack([w, h, w, h])
+    boxes = boxes * scale_fct
+    return boxes
