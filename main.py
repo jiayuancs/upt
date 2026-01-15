@@ -21,7 +21,9 @@ import torch.multiprocessing as mp
 from torch.utils.data import DataLoader, DistributedSampler
 
 from upt import build_detector
-from utils import custom_collate, CustomisedDLE, DataFactory
+from utils import custom_collate, CustomisedDLE, DataFactory, merge_ood_results, evaluate_ood_results
+from utils_ood_dataset import DataFactoryOOD
+from eval_ood import eval_ood
 
 warnings.filterwarnings("ignore")
 
@@ -48,6 +50,9 @@ def main(rank, args):
 
     trainset = DataFactory(name=args.dataset, partition=args.partitions[0], data_root=args.data_root)
     testset = DataFactory(name=args.dataset, partition=args.partitions[1], data_root=args.data_root)
+    oodset = DataFactoryOOD(
+        name=args.dataset, partition="", data_root=""
+    )
 
     train_loader = DataLoader(
         dataset=trainset,
@@ -63,6 +68,12 @@ def main(rank, args):
         collate_fn=custom_collate, batch_size=1,
         num_workers=args.num_workers, pin_memory=True, drop_last=False,
         sampler=torch.utils.data.SequentialSampler(testset)
+    )
+    ood_loader = DataLoader(
+        dataset=oodset,
+        collate_fn=custom_collate, batch_size=1,
+        num_workers=args.num_workers, pin_memory=True, drop_last=False,
+        sampler=torch.utils.data.SequentialSampler(oodset)
     )
 
     args.human_idx = 0
@@ -83,7 +94,7 @@ def main(rank, args):
         print(f"=> Rank {rank}: start from a randomly initialised model")
 
     engine = CustomisedDLE(
-        upt, train_loader,
+        upt, train_loader, test_dataloader, ood_loader,
         max_norm=args.clip_max_norm,
         num_classes=args.num_classes,
         print_interval=args.print_interval,
@@ -101,17 +112,27 @@ def main(rank, args):
     if args.eval:
         if args.dataset == 'vcoco':
             raise NotImplementedError(f"Evaluation on V-COCO has not been implemented.")
-        ap = engine.test_hico(test_loader)
-        # Fetch indices for rare and non-rare classes
-        num_anno = torch.as_tensor(trainset.dataset.anno_interaction)
-        rare = torch.nonzero(num_anno < 10).squeeze(1)
-        non_rare = torch.nonzero(num_anno >= 10).squeeze(1)
-        print(
-            f"The mAP is {ap.mean():.4f},"
-            f" rare: {ap[rare].mean():.4f},"
-            f" none-rare: {ap[non_rare].mean():.4f}"
-        )
-        return
+        else:
+            print(f"eval on HICO-DET testset...")
+            ap, match_ood_results_id_part = engine.test_hico()
+
+            num_anno = torch.as_tensor(trainset.dataset.anno_interaction)
+            rare = torch.nonzero(num_anno < 10).squeeze(1)
+            non_rare = torch.nonzero(num_anno >= 10).squeeze(1)
+            print(
+                f"The mAP is {ap.mean():.4f},"
+                f" rare: {ap[rare].mean():.4f},"
+                f" none-rare: {ap[non_rare].mean():.4f}"
+            )
+
+            # ood_loader 是与 HICO-DET 仅 object 类别相同（verb 类别完全不同）的数据集
+            print(f"eval on SWIG-HOI oodset...")
+            match_ood_results_ood_part = engine.test_hico_ood()
+
+            # 评测 OOD 任务的性能
+            all_match_ood_results = merge_ood_results(ood_results_lh=match_ood_results_id_part, ood_results_rh=match_ood_results_ood_part)
+            ood_performance = eval_ood(all_match_ood_results)
+            return
 
     for p in upt.detector.parameters():
         p.requires_grad = False

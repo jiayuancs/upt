@@ -126,10 +126,12 @@ class CacheTemplate(defaultdict):
             return [0., 0., .1, .1, 0.]
 
 class CustomisedDLE(DistributedLearningEngine):
-    def __init__(self, net, dataloader, max_norm=0, num_classes=117, **kwargs):
-        super().__init__(net, None, dataloader, **kwargs)
+    def __init__(self, net, train_dataloader, test_dataloader, ood_dataloader, max_norm=0, num_classes=117, **kwargs):
+        super().__init__(net, None, train_dataloader, **kwargs)
         self.max_norm = max_norm
         self.num_classes = num_classes
+        self.test_dataloader = test_dataloader
+        self.ood_dataloader = ood_dataloader
 
     def _on_each_iteration(self):
         loss_dict = self._state.net(
@@ -145,7 +147,8 @@ class CustomisedDLE(DistributedLearningEngine):
         self._state.optimizer.step()
 
     @torch.no_grad()
-    def test_hico(self, dataloader):
+    def test_hico(self):
+        dataloader = self.test_dataloader
         net = self._state.net
         net.eval()
 
@@ -160,6 +163,9 @@ class CustomisedDLE(DistributedLearningEngine):
             num_gt=dataset.anno_interaction,
             algorithm='11P'
         )
+
+        all_label = []
+        all_logit = []
         for batch in tqdm(dataloader):
             inputs = pocket.ops.relocate_to_cuda(batch[0])
             output = net(inputs)
@@ -182,6 +188,34 @@ class CustomisedDLE(DistributedLearningEngine):
             gt_bx_h = net.module.recover_boxes(target['boxes_h'], target['size'])
             gt_bx_o = net.module.recover_boxes(target['boxes_o'], target['size'])
 
+            # -------------- OOD 任务 ------------ #
+            # ctw = output["ctw"]
+            # atd = output["atd"]
+            # all_ctw.append(ctw)
+            # all_atd.append(atd)
+            all_scores = output['all_scores']   # [ho_pairs_cnt, 117]
+            ood_boxes_h, ood_boxes_o = boxes[output['all_pairings']].unbind(0)
+
+            # 匹配边界框，得到 ground-truth 标签(1 表示 ID 人物对，0 表示 OOD 人物对)
+            ood_label = associate(
+                (gt_bx_h.view(-1, 4),
+                gt_bx_o.view(-1, 4)),
+                (ood_boxes_h.view(-1, 4),
+                ood_boxes_o.view(-1, 4)),
+                None   # 对于重复匹配的人物对，仅保留 IoU 最大的人物对
+            )
+            # 仅保留与 ground-truth 匹配的 人物对
+            idxs = torch.nonzero(ood_label, as_tuple=False)
+            pos_score = all_scores[idxs].squeeze(1)
+
+            # 匹配的人物对
+            all_label.append(torch.ones_like(idxs))
+            all_logit.append(pos_score)
+
+            # all_label.append(ood_label)
+            # assert len(ood_label) == len(cur_ing_logits)
+            # ---------------- END -------------- #  
+
             # Associate detected pairs with ground truth pairs
             labels = torch.zeros_like(scores)
             unique_hoi = interactions.unique()
@@ -199,7 +233,77 @@ class CustomisedDLE(DistributedLearningEngine):
 
             meter.append(scores, interactions, labels)
 
-        return meter.eval()
+        match_ood_results = {
+            "label": torch.cat(all_label).squeeze(-1).numpy(),
+            "logit": torch.cat(all_logit).numpy()
+        }
+
+        return meter.eval(), match_ood_results
+
+
+    @torch.no_grad()
+    def test_hico_ood(self):
+        dataloader = self.ood_dataloader
+        net = self._state.net
+        net.eval()
+
+        associate = BoxPairAssociation(min_iou=0.5)
+
+        all_label = []
+        all_logit = []
+        for batch in tqdm(dataloader):
+            inputs = pocket.ops.relocate_to_cuda(batch[0])
+            output = net(inputs)
+
+            # Skip images without detections
+            if output is None or len(output) == 0:
+                continue
+            # Batch size is fixed as 1 for inference
+            assert len(output) == 1, f"Batch size is not 1 but {len(output)}."
+            output = pocket.ops.relocate_to_cpu(output[0], ignore=True)
+            target = batch[-1][0]
+            # Format detections
+            boxes = output['boxes']
+            boxes_h, boxes_o = boxes[output['pairing']].unbind(0)
+            objects = output['objects']
+            scores = output['scores']
+            verbs = output['labels']
+            interactions = conversion[objects, verbs]
+            # Recover target box scale
+            gt_bx_h = net.module.recover_boxes(target['boxes_h'], target['size'])
+            gt_bx_o = net.module.recover_boxes(target['boxes_o'], target['size'])
+
+            # -------------- OOD 任务 ------------ #
+            # ctw = output["ctw"]
+            # atd = output["atd"]
+            # all_ctw.append(ctw)
+            # all_atd.append(atd)
+            all_scores = output['all_scores']   # [ho_pairs_cnt, 117]
+            ood_boxes_h, ood_boxes_o = boxes[output['all_pairings']].unbind(0)
+
+            # 匹配边界框，得到 ground-truth 标签(1 表示 ID 人物对，0 表示 OOD 人物对)
+            ood_label = associate(
+                (gt_bx_h.view(-1, 4),
+                gt_bx_o.view(-1, 4)),
+                (ood_boxes_h.view(-1, 4),
+                ood_boxes_o.view(-1, 4)),
+                None   # 对于重复匹配的人物对，仅保留 IoU 最大的人物对
+            )
+            # 仅保留与 ground-truth 匹配的 人物对
+            idxs = torch.nonzero(ood_label, as_tuple=False)
+            pos_score = all_scores[idxs].squeeze(1)
+
+            # 匹配的人物对
+            all_label.append(torch.zeros_like(idxs))
+            all_logit.append(pos_score)
+            # ---------------- END -------------- #
+
+        match_ood_results = {
+            "label": torch.cat(all_label).squeeze(-1).numpy(),
+            "logit": torch.cat(all_logit).numpy()
+        }
+
+        return match_ood_results
 
     @torch.no_grad()
     def cache_hico(self, dataloader, cache_dir='matlab'):
@@ -328,3 +432,43 @@ class CustomisedDLE(DistributedLearningEngine):
         with open(os.path.join(cache_dir, 'cache.pkl'), 'wb') as f:
             # Use protocol 2 for compatibility with Python2
             pickle.dump(all_results, f, 2)
+
+def _cal_auc_fpr(id_ness, labels):
+    auroc = metrics.roc_auc_score(labels, id_ness)
+    fpr,tpr,thresh = Roc(labels, id_ness, pos_label=1)
+    fpr = float(interpolate.interp1d(tpr, fpr)(0.95))
+    return auroc, fpr
+
+to_np = lambda x: x.detach().cpu().numpy()
+def max_logit_score(logits):
+    return to_np(torch.max(logits, -1)[0])
+def msp_score(logits):
+    prob = torch.softmax(logits, -1)
+    return to_np(torch.max(prob, -1)[0])
+def energy_score(logits):
+    return to_np(torch.logsumexp(logits, -1))
+
+def merge_ood_results(ood_results_lh, ood_results_rh):
+    """合并两个 OOD 任务输出的结果"""
+    all_results = {}
+    assert ood_results_lh.keys() == ood_results_rh.keys()
+    for key in ood_results_lh.keys():
+        lh_res = ood_results_lh[key]
+        rh_res = ood_results_rh[key]
+        all_results[key] = np.concatenate((lh_res, rh_res), axis=0)
+    return all_results
+
+def evaluate_ood_results(ood_results):
+    """评估 OOD 任务输出的结果"""
+    # ground-truth
+    label_key_name = "label"
+    labels = ood_results[label_key_name]  # [n, 1]
+
+    eval_results = {}
+    for key, value in ood_results.items():
+        if key == label_key_name:
+            continue
+        auroc, fpr = _cal_auc_fpr(id_ness=value, labels=labels)
+        eval_results[key] = (auroc, fpr)
+    
+    return eval_results

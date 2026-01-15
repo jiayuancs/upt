@@ -192,7 +192,12 @@ class UPT(nn.Module):
             detections.append(dict(
                 boxes=bx, pairing=torch.stack([h[x], o[x]]),
                 scores=scores * pr[x, y], labels=y,
-                objects=obj[x], attn_maps=attn, size=size
+                objects=obj[x], attn_maps=attn, size=size,
+                # 用于OOD评测：
+                # all_scores[i] 表示第 i 个人物对(非重复人物对)的动作类别概率分布
+                all_scores = torch.sigmoid(lg) * pr,
+                # all_pairings[i] 表示第 i 个人物对(非重复人物对)的边界框索引
+                all_pairings = torch.stack([h, o])
             ))
 
         return detections
