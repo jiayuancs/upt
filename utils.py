@@ -195,22 +195,32 @@ class CustomisedDLE(DistributedLearningEngine):
             # all_atd.append(atd)
             all_scores = output['all_scores']   # [ho_pairs_cnt, 117]
             ood_boxes_h, ood_boxes_o = boxes[output['all_pairings']].unbind(0)
+            all_objects = output["all_objects"]
 
+            # 仅使用匹配的边界框计算OOD性能
             # 匹配边界框，得到 ground-truth 标签(1 表示 ID 人物对，0 表示 OOD 人物对)
-            ood_label = associate(
-                (gt_bx_h.view(-1, 4),
-                gt_bx_o.view(-1, 4)),
-                (ood_boxes_h.view(-1, 4),
-                ood_boxes_o.view(-1, 4)),
-                None   # 对于重复匹配的人物对，仅保留 IoU 最大的人物对
-            )
-            # 仅保留与 ground-truth 匹配的 人物对
-            idxs = torch.nonzero(ood_label, as_tuple=False)
-            pos_score = all_scores[idxs].squeeze(1)
+            # target['object']
+            # all_objects
+            unique_object = all_objects.unique()
+            for obj_idx in unique_object:
+                gt_idx = torch.nonzero(target['object'] == obj_idx).squeeze(1)
+                det_idx = torch.nonzero(all_objects == obj_idx).squeeze(1)
+                if len(gt_idx):
+                    ood_label = associate(
+                        (gt_bx_h[gt_idx].view(-1, 4),
+                        gt_bx_o[gt_idx].view(-1, 4)),
+                        (ood_boxes_h[det_idx].view(-1, 4),
+                        ood_boxes_o[det_idx].view(-1, 4)),
+                        None   # 对于重复匹配的人物对，仅保留 IoU 最大的人物对
+                    )
+                    # 仅保留与 ground-truth 匹配的 人物对
+                    d2idxs = torch.nonzero(ood_label, as_tuple=False)
+                    idxs = det_idx[d2idxs]
+                    pos_score = all_scores[idxs].squeeze(1)
 
-            # 匹配的人物对
-            all_label.append(torch.ones_like(idxs))
-            all_logit.append(pos_score)
+                    # 匹配的人物对
+                    all_label.append(torch.ones_like(idxs))
+                    all_logit.append(pos_score)
 
             # all_label.append(ood_label)
             # assert len(ood_label) == len(cur_ing_logits)
@@ -280,22 +290,32 @@ class CustomisedDLE(DistributedLearningEngine):
             # all_atd.append(atd)
             all_scores = output['all_scores']   # [ho_pairs_cnt, 117]
             ood_boxes_h, ood_boxes_o = boxes[output['all_pairings']].unbind(0)
+            all_objects = output["all_objects"]
 
+            # 仅使用匹配的边界框计算OOD性能
             # 匹配边界框，得到 ground-truth 标签(1 表示 ID 人物对，0 表示 OOD 人物对)
-            ood_label = associate(
-                (gt_bx_h.view(-1, 4),
-                gt_bx_o.view(-1, 4)),
-                (ood_boxes_h.view(-1, 4),
-                ood_boxes_o.view(-1, 4)),
-                None   # 对于重复匹配的人物对，仅保留 IoU 最大的人物对
-            )
-            # 仅保留与 ground-truth 匹配的 人物对
-            idxs = torch.nonzero(ood_label, as_tuple=False)
-            pos_score = all_scores[idxs].squeeze(1)
+            # target['object']
+            # all_objects
+            unique_object = all_objects.unique()
+            for obj_idx in unique_object:
+                gt_idx = torch.nonzero(target['object'] == obj_idx).squeeze(1)
+                det_idx = torch.nonzero(all_objects == obj_idx).squeeze(1)
+                if len(gt_idx):
+                    ood_label = associate(
+                        (gt_bx_h[gt_idx].view(-1, 4),
+                        gt_bx_o[gt_idx].view(-1, 4)),
+                        (ood_boxes_h[det_idx].view(-1, 4),
+                        ood_boxes_o[det_idx].view(-1, 4)),
+                        None   # 对于重复匹配的人物对，仅保留 IoU 最大的人物对
+                    )
+                    # 仅保留与 ground-truth 匹配的 人物对
+                    d2idxs = torch.nonzero(ood_label, as_tuple=False)
+                    idxs = det_idx[d2idxs]
+                    pos_score = all_scores[idxs].squeeze(1)
 
-            # 匹配的人物对
-            all_label.append(torch.zeros_like(idxs))
-            all_logit.append(pos_score)
+                    # 匹配的人物对
+                    all_label.append(torch.zeros_like(idxs))
+                    all_logit.append(pos_score)
             # ---------------- END -------------- #
 
         match_ood_results = {

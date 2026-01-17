@@ -197,7 +197,8 @@ class UPT(nn.Module):
                 # all_scores[i] 表示第 i 个人物对(非重复人物对)的动作类别概率分布
                 all_scores = torch.sigmoid(lg) * pr,
                 # all_pairings[i] 表示第 i 个人物对(非重复人物对)的边界框索引
-                all_pairings = torch.stack([h, o])
+                all_pairings = torch.stack([h, o]),
+                all_objects = obj
             ))
 
         return detections
